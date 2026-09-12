@@ -24,7 +24,7 @@ Code instruments with waveform, pulse, filter, arpeggio, and chord tables.
 - Per-oscillator legato glide enable and adjustable glide time
 - Pitch-bend and configurable modulation-wheel routing
 - Low-pass, band-pass, high-pass, and notch filtering
-- Per-voice scopes sourced from the corresponding emulated SID voice
+- Per-voice scopes show each voice through the active SID filter, or its raw waveform when filtering is off. Filtered scopes use isolated instances of the same reSID filter model; the audible mix still uses the SID's shared nonlinear filter. Scope filtering runs only while an editor is open.
 - SID-Wizard `.swi` Code instrument library
 - WF/ARP, pulse, filter, and chord table playback
 - SID-Wizard 4× multispeed instrument support

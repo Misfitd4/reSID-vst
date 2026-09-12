@@ -58,6 +58,16 @@ int main()
                   << "/" << (secondMode != nullptr ? secondMode->getSelectedId() : -1) << "\n";
         return 1;
     }
+#if JUCE_WINDOWS
+    for (auto* combo : { firstChip, firstMode, firstPreset, secondChip, secondMode }) {
+        auto* expectedParent = combo->findParentComponentOfClass<juce::AudioProcessorEditor>();
+        const auto options = juce::PopupMenu::Options().withTargetComponent(combo);
+        if (combo->getLookAndFeel().getParentComponentForMenuOptions(options) != expectedParent) {
+            std::cerr << "dropdown is not embedded in its own plugin editor\n";
+            return 1;
+        }
+    }
+#endif
     processor->releaseResources();
 
     std::cout << "loaded " << processor->getName() << "\n";

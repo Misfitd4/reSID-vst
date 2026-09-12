@@ -31,7 +31,27 @@ void SidSynth::reset()
     modWheel = 0.0f;
     modWheelPhase = 0.0;
     lastVoiceSamples.fill(0.0f);
+    for (int i = 0; i < sidVoiceCount; ++i) {
+        scopeFilters[static_cast<size_t>(i)].reset();
+        scopeOutputFilters[static_cast<size_t>(i)].reset();
+    }
     applyGlobalRegisters();
+}
+
+void SidSynth::setScopeCaptureEnabled(bool enabled)
+{
+    if (enabled && !scopeCaptureEnabled) {
+        for (int i = 0; i < sidVoiceCount; ++i) {
+            auto& filter = scopeFilters[static_cast<size_t>(i)];
+            filter.reset();
+            filter.writeFC_LO(appliedFilterCutoff & 0x07);
+            filter.writeFC_HI(appliedFilterCutoff >> 3);
+            filter.writeRES_FILT(appliedFilterResonance | 0x07);
+            filter.writeMODE_VOL(appliedFilterMode | 0x0f);
+            scopeOutputFilters[static_cast<size_t>(i)].reset();
+        }
+    }
+    scopeCaptureEnabled = enabled;
 }
 
 void SidSynth::setSettings(const SidSynthSettings& newSettings)
@@ -180,8 +200,21 @@ float SidSynth::nextSample()
 
     constexpr auto voiceOutputScale = 1.0f / (2048.0f * 255.0f);
     for (int voiceIndex = 0; voiceIndex < sidVoiceCount; ++voiceIndex) {
-        lastVoiceSamples[static_cast<size_t>(voiceIndex)] = std::clamp(
-            static_cast<float>(sid.voice_output(static_cast<unsigned int>(voiceIndex))) * voiceOutputScale,
+        const auto index = static_cast<size_t>(voiceIndex);
+        const auto rawVoice = sid.voice_output(static_cast<unsigned int>(voiceIndex));
+        auto scopeSample = static_cast<float>(rawVoice) * voiceOutputScale;
+        if (scopeCaptureEnabled && appliedFilterMode != 0) {
+            auto& filter = scopeFilters[index];
+            auto& outputFilter = scopeOutputFilters[index];
+            if (cycles > 0) {
+                filter.clock(cycles, voiceIndex == 0 ? rawVoice : 0,
+                             voiceIndex == 1 ? rawVoice : 0, voiceIndex == 2 ? rawVoice : 0);
+                outputFilter.clock(cycles, filter.output());
+            }
+            scopeSample = static_cast<float>(outputFilter.output()) / 32768.0f;
+        }
+        lastVoiceSamples[index] = std::clamp(
+            scopeSample,
             -1.0f,
             1.0f);
     }
@@ -289,6 +322,13 @@ void SidSynth::configureSid()
     sid.set_envelope_quirks_enabled(false);
     sid.set_sampling_parameters(c64PalClock, reSID::SAMPLE_INTERPOLATE, sampleRate);
     sid.enable_external_filter(true);
+    for (int i = 0; i < sidVoiceCount; ++i) {
+        auto& filter = scopeFilters[static_cast<size_t>(i)];
+        filter.set_chip_model(settings.chipModel == ChipModel::mos8580 ? reSID::MOS8580 : reSID::MOS6581);
+        filter.set_voice_mask(1 << i);
+        filter.reset();
+        scopeOutputFilters[static_cast<size_t>(i)].reset();
+    }
     configuredChipModel = settings.chipModel;
     configuredSampleRate = sampleRate;
     sidConfigured = true;
@@ -351,7 +391,22 @@ void SidSynth::applyGlobalRegisters()
 
     sid.enable_filter(mode != 0);
     appliedFilterCutoff = cutoff;
+    appliedFilterResonance = resonance;
+    const auto filterWasOff = appliedFilterMode == 0;
     appliedFilterMode = mode;
+
+    for (int i = 0; i < sidVoiceCount; ++i) {
+        auto& filter = scopeFilters[static_cast<size_t>(i)];
+        if (filterWasOff && mode != 0) {
+            filter.reset();
+            scopeOutputFilters[static_cast<size_t>(i)].reset();
+        }
+        filter.enable_filter(mode != 0);
+        filter.writeFC_LO(cutoff & 0x07);
+        filter.writeFC_HI(cutoff >> 3);
+        filter.writeRES_FILT(resonance | 0x07);
+        filter.writeMODE_VOL(mode | 0x0f);
+    }
 
     sid.write(0x15, cutoff & 0x07);
     sid.write(0x16, cutoff >> 3);

@@ -105,6 +105,7 @@ public:
     void setModWheel(float normalizedValue);
 
     float nextSample();
+    void setScopeCaptureEnabled(bool enabled);
     double getSampleRate() const { return sampleRate; }
     uint16_t debugVoiceFrequency(int voiceIndex) const;
     uint8_t debugVoiceControl(int voiceIndex) const;
@@ -209,6 +210,11 @@ private:
     static uint16_t sid11Bit(float value);
 
     reSID::SID sid;
+    // Isolated voice previews through the same reSID filter model. These do
+    // not feed the audio mix (the real SID has one shared nonlinear filter).
+    std::array<reSID::Filter, 3> scopeFilters;
+    std::array<reSID::ExternalFilter, 3> scopeOutputFilters;
+    bool scopeCaptureEnabled = false;
     SidSynthSettings settings;
     std::array<VoiceState, sidVoiceCount> voices {};
     double sampleRate = 44100.0;
@@ -223,6 +229,7 @@ private:
     float modWheel = 0.0f;
     double modWheelPhase = 0.0;
     uint16_t appliedFilterCutoff = 0;
+    uint8_t appliedFilterResonance = 0;
     uint8_t appliedFilterMode = 0;
     std::array<uint16_t, 3> appliedPulseWidths {};
     std::array<float, 3> lastVoiceSamples {};

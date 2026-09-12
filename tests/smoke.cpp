@@ -4,8 +4,76 @@
 #include <cmath>
 #include <iostream>
 
+bool testFilteredScopes()
+{
+    for (auto chip : { resid_vst::ChipModel::mos6581, resid_vst::ChipModel::mos8580 }) {
+        for (int activeVoice = 0; activeVoice < 3; ++activeVoice) {
+            resid_vst::SidSynth preview, reference;
+            preview.prepare(48000.0);
+            reference.prepare(48000.0);
+            preview.setScopeCaptureEnabled(true);
+            resid_vst::SidSynthSettings settings;
+            settings.chipModel = chip;
+            settings.voiceMode = resid_vst::VoiceMode::poly;
+            for (int i = 0; i < 3; ++i) {
+                settings.voice[static_cast<size_t>(i)].waveform = i == activeVoice
+                    ? resid_vst::Waveform::saw : resid_vst::Waveform::off;
+            }
+            preview.setSettings(settings);
+            reference.setSettings(settings);
+            for (int note : { 60, 64, 67 }) {
+                preview.noteOn(note, 1.0f);
+                reference.noteOn(note, 1.0f);
+            }
+            for (auto mode : { resid_vst::FilterMode::lowpass, resid_vst::FilterMode::bandpass,
+                               resid_vst::FilterMode::highpass, resid_vst::FilterMode::notch,
+                               resid_vst::FilterMode::off }) {
+                settings.filterMode = mode;
+                settings.cutoff = 0.35f;
+                preview.setSettings(settings);
+                reference.setSettings(settings);
+                double difference = 0.0;
+                std::array<double, 3> energy {};
+                for (int sample = 0; sample < 12000; ++sample) {
+                    // Opening/closing the editor during playback must not
+                    // disturb pending SID register writes or the audio.
+                    if (sample == 2000) preview.setScopeCaptureEnabled(false);
+                    if (sample == 2100) preview.setScopeCaptureEnabled(true);
+                    if (preview.nextSample() != reference.nextSample()) {
+                        std::cerr << "scope capture changed the audio output\n";
+                        return false;
+                    }
+                    for (int voice = 0; voice < 3; ++voice) {
+                        const auto value = preview.debugVoiceSample(voice);
+                        if (!std::isfinite(value)) return false;
+                        if (sample >= 8000) energy[static_cast<size_t>(voice)] += value * value;
+                    }
+                    if (sample >= 8000) {
+                        difference += std::abs(preview.debugVoiceSample(activeVoice)
+                                               - reference.debugVoiceSample(activeVoice));
+                    }
+                }
+                if (mode == resid_vst::FilterMode::off ? difference != 0.0 : difference < 0.1) {
+                    std::cerr << "scope did not follow filter enable/bypass\n";
+                    return false;
+                }
+                if (mode != resid_vst::FilterMode::off) {
+                    for (int voice = 0; voice < 3; ++voice) {
+                        if (voice != activeVoice && energy[static_cast<size_t>(voice)] > 0.001) {
+                            std::cerr << "filtered scope contains another voice\n";
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
 int main()
 {
+    if (!testFilteredScopes()) return 1;
     resid_vst::SidSynth synth;
     synth.prepare(48000.0);
 

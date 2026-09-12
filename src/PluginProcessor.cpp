@@ -119,13 +119,15 @@ public:
         }
         addAndMakeVisible(codeEditor);
 
-        setSize(1040, 1170);
+        setSize(1040, 1040);
         syncControlsFromProcessor();
+        audioProcessor.addScopeViewer();
         startTimerHz(30);
     }
 
     ~ReSidAudioProcessorEditor() override
     {
+        audioProcessor.removeScopeViewer();
         setLookAndFeel(nullptr);
     }
 
@@ -185,7 +187,7 @@ public:
         auto area = getLocalBounds().reduced(18);
         area.removeFromTop(headerHeight);
 
-        auto top = area.removeFromTop(90);
+        auto top = area.removeFromTop(78);
         layoutLabelled(chipLabel, chipBox, top.removeFromLeft(120));
         layoutLabelled(voiceModeLabel, voiceModeBox, top.removeFromLeft(140));
         layoutLabelled(filterModeLabel, filterModeBox, top.removeFromLeft(150));
@@ -196,20 +198,20 @@ public:
         layoutLabelled(resonanceLabel, resonanceSlider, knobs.removeFromLeft(110));
         layoutLabelled(gainLabel, gainSlider, knobs.removeFromLeft(110));
 
-        auto modulation = area.removeFromTop(70);
+        auto modulation = area.removeFromTop(60);
         layoutLabelled(pitchBendRangeLabel, pitchBendRangeSlider, modulation.removeFromLeft(110));
         layoutLabelled(modWheelTargetLabel, modWheelTargetBox, modulation.removeFromLeft(180));
         layoutLabelled(modWheelDepthLabel, modWheelDepthSlider, modulation.removeFromLeft(110));
         layoutLabelled(codeLegatoLabel, codeLegatoButton, modulation.removeFromLeft(120));
 
-        area.removeFromTop(10);
-        auto voiceArea = area.removeFromTop(540);
+        area.removeFromTop(6);
+        auto voiceArea = area.removeFromTop(480);
         const auto panelWidth = voiceArea.getWidth() / 3;
         for (int i = 0; i < 3; ++i) {
             voices[static_cast<size_t>(i)]->setBounds(voiceArea.removeFromLeft(panelWidth).reduced(5, 0));
         }
 
-        area.removeFromTop(10);
+        area.removeFromTop(6);
         codeEditor.setBounds(area);
     }
 
@@ -229,6 +231,22 @@ private:
             setColour(juce::ComboBox::outlineColourId, juce::Colour(colourLine));
             setColour(juce::PopupMenu::backgroundColourId, juce::Colour(0xff181b1f));
             setColour(juce::PopupMenu::textColourId, juce::Colour(colourText));
+        }
+
+        juce::Component* getParentComponentForMenuOptions(const juce::PopupMenu::Options& options) override
+        {
+#if JUCE_WINDOWS
+            // Keep host-owned plugin menus inside the editor's native window.
+            // Separate popup HWNDs can lose activation in hosts such as Renoise.
+            if (options.getParentComponent() == nullptr) {
+                if (auto* target = options.getTargetComponent()) {
+                    if (auto* editor = target->findParentComponentOfClass<juce::AudioProcessorEditor>()) {
+                        return editor;
+                    }
+                }
+            }
+#endif
+            return juce::LookAndFeel_V4::getParentComponentForMenuOptions(options);
         }
 
         void drawRotarySlider(juce::Graphics& graphics, int x, int y, int width, int height, float sliderPos,
@@ -1585,28 +1603,28 @@ private:
 
         void resized() override
         {
-            auto area = getLocalBounds().reduced(14);
-            title.setBounds(area.removeFromTop(32));
+            auto area = getLocalBounds().reduced(12);
+            title.setBounds(area.removeFromTop(30));
 
-            auto selectors = area.removeFromTop(64);
+            auto selectors = area.removeFromTop(58);
             layoutLabelled(waveformLabel, waveformSelector, selectors.removeFromLeft(selectors.getWidth() / 2).reduced(0, 4));
             layoutLabelled(wavetableLabel, wavetableBox, selectors.reduced(0, 4));
 
-            auto scopeArea = area.removeFromTop(92);
-            scope.setBounds(scopeArea.reduced(0, 8));
+            auto scopeArea = area.removeFromTop(82);
+            scope.setBounds(scopeArea.reduced(0, 6));
 
-            auto envelopeArea = area.removeFromTop(150);
-            adsr.setBounds(envelopeArea.reduced(0, 6));
+            auto envelopeArea = area.removeFromTop(145);
+            adsr.setBounds(envelopeArea.reduced(0, 4));
 
-            area.removeFromTop(8);
-            auto mainKnobs = area.removeFromTop(72);
+            area.removeFromTop(4);
+            auto mainKnobs = area.removeFromTop(68);
             const int knobWidth = mainKnobs.getWidth() / 4;
             layoutLabelled(pulseWidthLabel, pulseWidthSlider, mainKnobs.removeFromLeft(knobWidth).reduced(4, 0));
             layoutLabelled(octaveLabel, octaveSlider, mainKnobs.removeFromLeft(knobWidth).reduced(4, 0));
             layoutLabelled(detuneLabel, detuneSlider, mainKnobs.removeFromLeft(knobWidth).reduced(4, 0));
             layoutLabelled(wavetableRateLabel, wavetableRateSlider, mainKnobs.removeFromLeft(knobWidth).reduced(4, 0));
 
-            auto glideArea = area.removeFromTop(66);
+            auto glideArea = area.removeFromTop(58);
             layoutLabelled(glideLabel, glideButton, glideArea.removeFromLeft(glideArea.getWidth() / 2).reduced(12, 0));
             layoutLabelled(glideTimeLabel, glideTimeSlider, glideArea.reduced(12, 0));
         }
@@ -1742,7 +1760,7 @@ private:
         addAndMakeVisible(label);
     }
 
-    static constexpr int headerHeight = 72;
+    static constexpr int headerHeight = 64;
 
     ReSidAudioProcessor& audioProcessor;
     APVTS& parameterState;
@@ -1880,6 +1898,7 @@ void ReSidAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     buffer.clear();
     const auto settings = readSettings();
     synth.setSettings(settings);
+    synth.setScopeCaptureEnabled(scopeViewers.load(std::memory_order_relaxed) > 0);
     const auto cleanSilenceEnabled = value(parameters, "clean_silence") > 0.5f;
 
     auto midiIterator = midiMessages.cbegin();
@@ -1922,12 +1941,13 @@ void ReSidAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             sidSample = 0.0f;
         }
 
-        const auto scopeIndex = scopeWriteIndex.fetch_add(1, std::memory_order_relaxed) & (scopeSize - 1);
+        const auto scopeIndex = scopeWriteIndex.load(std::memory_order_relaxed);
         for (int voice = 0; voice < 3; ++voice) {
             voiceScopes[static_cast<size_t>(voice)][static_cast<size_t>(scopeIndex)].store(
                 synth.debugVoiceSample(voice),
                 std::memory_order_relaxed);
         }
+        scopeWriteIndex.store((scopeIndex + 1) & (scopeSize - 1), std::memory_order_release);
 
         for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
             buffer.setSample(channel, sample, sidSample);
@@ -1942,7 +1962,7 @@ void ReSidAudioProcessor::copyVoiceScope(int voiceIndex, ScopeSnapshot& destinat
         return;
     }
 
-    const auto writeIndex = scopeWriteIndex.load(std::memory_order_relaxed);
+    const auto writeIndex = scopeWriteIndex.load(std::memory_order_acquire);
     const auto& source = voiceScopes[static_cast<size_t>(voiceIndex)];
     for (int i = 0; i < scopeSize; ++i) {
         const auto sourceIndex = (writeIndex + i) & (scopeSize - 1);

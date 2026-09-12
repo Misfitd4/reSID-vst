@@ -40,6 +40,8 @@ public:
     static constexpr int scopeSize = 512;
     using ScopeSnapshot = std::array<float, scopeSize>;
     void copyVoiceScope(int voiceIndex, ScopeSnapshot& destination) const;
+    void addScopeViewer() { scopeViewers.fetch_add(1, std::memory_order_relaxed); }
+    void removeScopeViewer() { scopeViewers.fetch_sub(1, std::memory_order_relaxed); }
     APVTS& parameterState() { return parameters; }
 
 private:
@@ -49,6 +51,7 @@ private:
     APVTS parameters;
     resid_vst::SidSynth synth;
     std::array<std::array<std::atomic<float>, scopeSize>, 3> voiceScopes {};
+    std::atomic<int> scopeViewers { 0 };
     std::atomic<int> scopeWriteIndex { 0 };
     float dcBlockLastInput = 0.0f;
     float dcBlockLastOutput = 0.0f;
