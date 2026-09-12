@@ -16,7 +16,11 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -A x64
       - name: Build
-        run: cmake --build build --config Release --target ReSIDVST_VST3 --parallel
+        run: cmake --build build --config Release --target ReSIDVST_VST3 resid_smoke plugin_load_smoke --parallel
+      - name: Test synth
+        run: ./build/Release/resid_smoke.exe
+      - name: Test plugin and dropdown ownership
+        run: ./build/Release/plugin_load_smoke.exe
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path "build/ReSIDVST_artefacts/Release/VST3/reSID VST.vst3" -DestinationPath "reSID-VST-${{ github.ref_name }}-windows-x64.zip"
@@ -33,9 +37,15 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
       - name: Build
-        run: cmake --build build --target ReSIDVST_VST3 --parallel
+        run: cmake --build build --target ReSIDVST_VST3 resid_smoke plugin_load_smoke --parallel
+      - name: Test synth
+        run: ./build/resid_smoke
+      - name: Test plugin
+        run: ./build/plugin_load_smoke
       - name: Sign completed bundle
         run: codesign --force --deep --sign - "build/ReSIDVST_artefacts/Release/VST3/reSID VST.vst3"
+      - name: Verify signature
+        run: codesign --verify --deep --strict "build/ReSIDVST_artefacts/Release/VST3/reSID VST.vst3"
       - name: Package
         run: ditto -c -k --sequesterRsrc --keepParent "build/ReSIDVST_artefacts/Release/VST3/reSID VST.vst3" "reSID-VST-${{ github.ref_name }}-macos-universal.zip"
       - uses: actions/upload-artifact@v4
